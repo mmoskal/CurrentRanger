@@ -31,7 +31,7 @@
 char rangeUnit = 'm';
 uint32_t lastInteraction=0;
 //***********************************************************************************************************
-#define LDO_OUTPUT             3.3 //volts, change to actual LDO output (measure GND-3V on OLED header)
+#define LDO_OUTPUT             3.299 //volts, change to actual LDO output (measure GND-3V on OLED header)
 //***********************************************************************************************************
 #define SENSE_OUTPUT           A3
 #define SENSE_GNDISO           A2
@@ -72,7 +72,7 @@ uint32_t lastInteraction=0;
   #include <Wire.h>
   //i2c scanner: https://playground.arduino.cc/Main/I2cScanner
   #define OLED_ADDRESS  0x3C //i2c address on most small OLEDs
-  #define OLED_REFRESH_INTERVAL 200 //ms
+  #define OLED_REFRESH_INTERVAL 1000 //ms
   U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
   byte OLED_found=false;
 #endif
@@ -213,6 +213,8 @@ byte readVbatLoop=0;
 float vbat=0;
 float read1=0,read2=0,readDiff=0;
 bool rangeSwitched=false;
+float diffSum = 0;
+int numSamples = 0;
 
 #define RANGE_MA rangeUnit=='m'
 #define RANGE_UA rangeUnit=='u'
@@ -232,16 +234,25 @@ void rangeBeep(uint16_t switch_delay=0)
   }
 }
 
+int wdc = 0;
+
 void loop()
 {
+  if(wdc++>30) {
   WDTclear(); //keep the dog happy
+  wdc = 0;
+  }
+
   handleTouchPads();
   handleAutoOff();
+
+  readVOUT();
+  diffSum += readDiff;
+  numSamples++;
 
 #ifdef AUTORANGING_EN
   if (AUTORANGE)
   {
-    readVOUT();
     //assumes we only auto-range in DC mode (no bias)
     if (readDiff <= RANGE_SWITCH_THRESHOLD_LOW)
     {
@@ -263,7 +274,6 @@ void loop()
   if (BT_found && millis() - btInterval > BT_REFRESH_INTERVAL) //refresh rate (ms)
   {
     btInterval = millis();
-    readVOUT();
     float VOUT = ((readDiff)/4096.0)*LDO_OUTPUT*1000*(OFFSET?1:OUTPUT_CALIB_FACTOR);
 #if defined BT_OUTPUT_ADC
     Serial.println(readDiff,0);
@@ -277,8 +287,7 @@ void loop()
   if (OLED_found && millis() - oledInterval > OLED_REFRESH_INTERVAL) //refresh rate (ms)
   {
     oledInterval = millis();
-    readVOUT();
-    float VOUT = ((readDiff)/4096.0)*LDO_OUTPUT*1000*(OFFSET?1:OUTPUT_CALIB_FACTOR);
+    float VOUT = ((diffSum/numSamples)/4096.0)*LDO_OUTPUT*1000*(OFFSET?1:OUTPUT_CALIB_FACTOR);
 
     u8g2.clearBuffer();
     u8g2.setFont(u8g2_font_9x15B_tf);
@@ -293,7 +302,7 @@ void loop()
     
     if (vbat < LOBAT_THRESHOLD) u8g2.drawStr(78,12,"LoBat!");
     else {
-      u8g2.drawStr(88,12,"vBat");
+      u8g2.drawStr(88,12,"VBat");
       u8g2.setCursor(52,12); u8g2.print(vbat); //VIN
     }
 
@@ -325,6 +334,9 @@ void loop()
       u8g2.drawStr(0,28, "OVERLOAD!");
     }
     u8g2.sendBuffer();
+
+    diffSum = 0;
+    numSamples = 0;
   }
 }
 
@@ -332,6 +344,7 @@ uint32_t buttonLastChange_range;
 uint16_t valM=0, valU=0, valN=0;
 void handleTouchPads() {
   if (millis() - buttonLastChange_range < 200) return;
+  buttonLastChange_range = millis();
   if (MA_PRESSED || UA_PRESSED || NA_PRESSED) lastInteraction=millis();
 
   //range switching
@@ -396,9 +409,9 @@ void handleAutoOff() {
       autoOffBuzzInterval = millis();
       AUTOOFFBUZZ=!AUTOOFFBUZZ;
 
-      if (AUTOOFFBUZZ)
-        tone(BUZZER, NOTE_B5);
-      else
+      if (AUTOOFFBUZZ) {
+        // tone(BUZZER, NOTE_B5);
+      } else
         noTone(BUZZER);
     }
 
@@ -461,9 +474,13 @@ void Beep(byte theDelay, boolean twoSounds) {
   }
 }
 
+int adcSetup;
+
 #define ADCSYNC while (ADC->STATUS.bit.SYNCBUSY)
 int adcRead(byte ADCpin)
 {
+  if (!adcSetup) {
+    adcSetup = 1;
   ADC->CTRLA.bit.ENABLE = 0;              // disable ADC
   ADCSYNC;
 
@@ -483,12 +500,15 @@ int adcRead(byte ADCpin)
 
   ADC->CTRLA.bit.ENABLE = 1;  // enable ADC
   ADCSYNC;
+  }
 
   int adc = analogRead(ADCpin); 
 
+#if 0
   ADC->CTRLB.reg = CTRLBoriginal;
   ADC->AVGCTRL.reg = AVGCTRLoriginal;
   ADC->SAMPCTRL.reg = SAMPCTRLoriginal;
+#endif
 
   return adc;
 }
@@ -689,7 +709,7 @@ void WDTset() {
   WDT->CTRL.reg = 0; //disable WDT
   while(WDT->STATUS.bit.SYNCBUSY);
   WDT->INTENCLR.bit.EW   = 1;      //disable early warning
-  WDT->CONFIG.bit.PER    = 0x7;    //period ~1s
+  WDT->CONFIG.bit.PER    = 0x9;    //period ~4s
   WDT->CTRL.bit.WEN      = 0;      //disable window mode
   while(WDT->STATUS.bit.SYNCBUSY);
   WDTclear();
@@ -701,3 +721,6 @@ void WDTclear(){
   WDT->CLEAR.reg = WDT_CLEAR_CLEAR_KEY;
   while(WDT->STATUS.bit.SYNCBUSY);
 }
+
+
+

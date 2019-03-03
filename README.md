@@ -1,4 +1,9 @@
 # CurrentRanger
+
+**This fork has been modified to sample the voltage continuously during loop() and display
+average results on the screen every 1000ms.**
+
+
 Precision auto-ranging current meter (ammeter)
 
 ## [Please see the full guide and latest updates posted here.](https://lowpowerlab.com/guide/currentranger/)
